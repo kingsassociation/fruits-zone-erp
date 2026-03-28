@@ -1,0 +1,231 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth.js (NextAuth v5) required models ───────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Users & Roles ───────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  VENDOR
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  password  String? // hashed with bcryptjs
+  role      Role      @default(VENDOR)
+  image     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  accounts  Account[]
+  sessions  Session[]
+  vendor    Vendor?
+}
+
+// ─── Vendor / Partner ────────────────────────────────────────────────────────
+
+enum VendorStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+model Vendor {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName   String
+  phone          String
+  address        String?
+  nid            String? // national ID
+  status         VendorStatus   @default(PENDING)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  subscription   Subscription?
+  purchaseOrders PurchaseOrder[]
+  sales          Sale[]
+}
+
+// ─── Subscription Plans & Payments ───────────────────────────────────────────
+
+model SubscriptionPlan {
+  id            String         @id @default(cuid())
+  name          String // "Starter", "Pro", "Enterprise"
+  price         Int // monthly in BDT
+  interval      String         @default("month")
+  maxMonthlyOrders Int         @default(50)
+  analyticsEnabled Boolean     @default(false)
+  prioritySupport  Boolean     @default(false)
+  description   String?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                  String           @id @default(cuid())
+  vendorId            String           @unique
+  vendor              Vendor           @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  planId              String
+  plan                SubscriptionPlan @relation(fields: [planId], references: [id])
+  status              String           @default("active") // active | canceled | past_due
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  sslTransactionId    String? // SSLCommerz transaction ID
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+}
+
+// ─── Products (Fruits) ───────────────────────────────────────────────────────
+
+model Fruit {
+  id          String      @id @default(cuid())
+  name        String
+  nameBn      String? // Bangla name
+  slug        String      @unique
+  description String?
+  images      String[] // array of image URLs
+  category    FruitCategory
+  unit        String      @default("kg") // kg | piece | box | pack
+  basePrice   Decimal     @db.Decimal(10, 2)
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  inventory   Inventory?
+  offers      Offer[]
+  orderItems  OrderItem[]
+  saleItems   SaleItem[]
+}
+
+enum FruitCategory {
+  FRESH_FRUITS
+  DRY_FRUITS
+  NUTS
+  COMBO
+  GIFT_PACK
+  OTHER
+}
+
+model Inventory {
+  id            String   @id @default(cuid())
+  fruitId       String   @unique
+  fruit         Fruit    @relation(fields: [fruitId], references: [id], onDelete: Cascade)
+  quantity      Int      @default(0)
+  lowStockAlert Int      @default(10)
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── Offers / Discounts ───────────────────────────────────────────────────────
+
+model Offer {
+  id        String   @id @default(cuid())
+  fruitId   String
+  fruit     Fruit    @relation(fields: [fruitId], references: [id], onDelete: Cascade)
+  discount  Decimal  @db.Decimal(10, 2) // percentage or fixed BDT
+  type      String   @default("percentage") // "percentage" | "fixed"
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ─── Purchase Orders (Vendor orders stock from Admin) ─────────────────────────
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id          String      @id @default(cuid())
+  vendorId    String
+  vendor      Vendor      @relation(fields: [vendorId], references: [id])
+  status      OrderStatus @default(PENDING)
+  totalAmount Decimal     @db.Decimal(10, 2)
+  notes       String?
+  items       OrderItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model OrderItem {
+  id              String         @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  fruitId         String
+  fruit           Fruit          @relation(fields: [fruitId], references: [id])
+  quantity        Int
+  priceAtTime    Decimal        @db.Decimal(10, 2)
+  createdAt       DateTime       @default(now())
+}
+
+// ─── Sales (Vendor's sales records) ──────────────────────────────────────────
+
+model Sale {
+  id          String     @id @default(cuid())
+  vendorId    String
+  vendor      Vendor     @relation(fields: [vendorId], references: [id])
+  totalAmount Decimal    @db.Decimal(10, 2)
+  note        String?
+  items       SaleItem[]
+  createdAt   DateTime   @default(now())
+}
+
+model SaleItem {
+  id       String  @id @default(cuid())
+  saleId   String
+  sale     Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  fruitId  String
+  fruit    Fruit   @relation(fields: [fruitId], references: [id])
+  quantity Int
+  price    Decimal @db.Decimal(10, 2)
+}
