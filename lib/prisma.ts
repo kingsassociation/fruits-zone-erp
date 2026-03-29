@@ -1,27 +1,34 @@
-import { Pool, neonConfig } from '@neondatabase/serverless';
-import { PrismaNeon } from '@prisma/adapter-neon';
-import { PrismaClient } from '@prisma/client';
-import ws from 'ws';
+import { PrismaClient } from "@prisma/client"
+import { PrismaPg } from "@prisma/adapter-pg"
+import { Pool } from "pg"
+import { env } from "./env"
 
-// Set up WebSocket for Neon serverless driver
-if (typeof window === 'undefined') {
-  neonConfig.webSocketConstructor = ws;
+// Use a connection pool — more efficient and stable than a single connection
+// This aligns with the structure of the RoktoLagbe reference project
+const pool = new Pool({
+  connectionString: env.DATABASE_URL,
+  max: 10,               // max pool size
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+})
+
+const adapter = new PrismaPg(pool as any)
+
+
+
+
+const createPrismaClient = () =>
+  new PrismaClient({
+    adapter,
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  })
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: ReturnType<typeof createPrismaClient> | undefined
 }
 
-const connectionString = process.env.POOLER_URL!;
+const prisma = globalForPrisma.prisma ?? createPrismaClient()
 
-const prismaClientSingleton = () => {
-  const pool = new Pool({ connectionString });
-  const adapter = new PrismaNeon(pool as any);
-  return new PrismaClient({ adapter });
-};
+export default prisma
 
-declare global {
-  var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;
-}
-
-const prisma = globalThis.prismaGlobal ?? prismaClientSingleton();
-
-export default prisma;
-
-if (process.env.NODE_ENV !== 'production') globalThis.prismaGlobal = prisma;
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma
